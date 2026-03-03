@@ -90,10 +90,11 @@ TOOLS: List[Dict[str, Any]] = [
         "function": {
             "name": "delegate_research",
             "description": (
-                "Use this tool to delegate complex questions, deep research, or inquiries about "
-                "live current events to a specialized sub-agent. Do not try to answer current events "
-                "yourself; always use this tool. Pass 'deep_dive' for complex reasoning, or "
-                "'current_events' for news/web searches."
+                "Use this tool to delegate complex questions, deep research, or web/current events "
+                "to a specialized sub-agent. Do not try to answer current events yourself; always use "
+                "this tool. Pass 'deep_dive' for complex reasoning, 'simple_web' for straightforward "
+                "web lookups (facts, definitions, simple queries), or 'current_events' for complex "
+                "news/current events and multi-faceted web research."
             ),
             "parameters": {
                 "type": "object",
@@ -104,8 +105,8 @@ TOOLS: List[Dict[str, Any]] = [
                     },
                     "search_type": {
                         "type": "string",
-                        "enum": ["deep_dive", "current_events"],
-                        "description": "Use 'deep_dive' for complex reasoning, 'current_events' for news.",
+                        "enum": ["deep_dive", "simple_web", "current_events"],
+                        "description": "Use 'deep_dive' for complex reasoning, 'simple_web' for simple web lookups, 'current_events' for complex news/research.",
                     },
                 },
                 "required": ["query", "search_type"],
@@ -176,7 +177,7 @@ def search_vault(query: str) -> str:
 def delegate_research(query: str, search_type: str) -> str:
     """
     Delegate research to a specialized model via OpenRouter.
-    search_type: 'deep_dive' -> google/gemini-2.5-pro, 'current_events' -> perplexity/sonar-pro.
+    search_type: 'deep_dive' -> gemini-2.5-pro, 'simple_web' -> sonar, 'current_events' -> sonar-pro.
     """
     api_key = (os.getenv("OPENROUTER_API_KEY") or "").strip()
     if not api_key:
@@ -184,10 +185,12 @@ def delegate_research(query: str, search_type: str) -> str:
 
     if search_type == "deep_dive":
         model = "google/gemini-2.5-pro"
+    elif search_type == "simple_web":
+        model = "perplexity/sonar"
     elif search_type == "current_events":
         model = "perplexity/sonar-pro"
     else:
-        return f"Invalid search_type '{search_type}'. Use 'deep_dive' or 'current_events'."
+        return f"Invalid search_type '{search_type}'. Use 'deep_dive', 'simple_web', or 'current_events'."
 
     system_prompt = (
         "You are an expert research agent. Provide a comprehensive, highly detailed, "
