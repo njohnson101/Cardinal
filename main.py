@@ -15,12 +15,13 @@ from cardinal import (
     CHAT_MODEL,
     TOKEN_THRESHOLD,
     TOOLS,
+    delegate_research,
     estimate_tokens,
-    summarize_memory,
     load_memory,
+    read_date_range,
     save_memory,
     search_vault,
-    read_date_range,
+    summarize_memory,
 )
 
 
@@ -192,6 +193,13 @@ class CardinalApp(ctk.CTk):
                     f"[System: Reading journal entries from {start_date} to {end_date}...]"
                 )
                 tool_result = read_date_range(start_date, end_date)
+            elif tool_name == "delegate_research":
+                query = arguments.get("query", "")
+                search_type = arguments.get("search_type", "deep_dive")
+                self._append_safe(
+                    f"[System: Cardinal is delegating research for '{query}'...]"
+                )
+                tool_result = delegate_research(query, search_type)
             else:
                 tool_result = f"Unknown tool '{tool_name}' requested."
                 self._append_safe(f"[System: {tool_result}]")

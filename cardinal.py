@@ -12,6 +12,7 @@ import os
 from datetime import datetime, timedelta
 from typing import List, Dict, Any
 
+import requests
 from dotenv import load_dotenv
 from openai import OpenAI
 
@@ -84,6 +85,33 @@ TOOLS: List[Dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "delegate_research",
+            "description": (
+                "Use this tool to delegate complex questions, deep research, or inquiries about "
+                "live current events to a specialized sub-agent. Do not try to answer current events "
+                "yourself; always use this tool. Pass 'deep_dive' for complex reasoning, or "
+                "'current_events' for news/web searches."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The research question or topic to investigate.",
+                    },
+                    "search_type": {
+                        "type": "string",
+                        "enum": ["deep_dive", "current_events"],
+                        "description": "Use 'deep_dive' for complex reasoning, 'current_events' for news.",
+                    },
+                },
+                "required": ["query", "search_type"],
+            },
+        },
+    },
 ]
 
 
@@ -143,6 +171,63 @@ def search_vault(query: str) -> str:
 
     header = f"Top {len(matches)} matches in Obsidian vault for query: '{query}':"
     return header + "\n" + "\n\n".join(matches)
+
+
+def delegate_research(query: str, search_type: str) -> str:
+    """
+    Delegate research to a specialized model via OpenRouter.
+    search_type: 'deep_dive' -> google/gemini-2.5-pro, 'current_events' -> perplexity/sonar-pro.
+    """
+    api_key = (os.getenv("OPENROUTER_API_KEY") or "").strip()
+    if not api_key:
+        return "Error: OPENROUTER_API_KEY not found in environment."
+
+    if search_type == "deep_dive":
+        model = "google/gemini-2.5-pro"
+    elif search_type == "current_events":
+        model = "perplexity/sonar-pro"
+    else:
+        return f"Invalid search_type '{search_type}'. Use 'deep_dive' or 'current_events'."
+
+    system_prompt = (
+        "You are an expert research agent. Provide a comprehensive, highly detailed, "
+        "and factual report on the user's query."
+    )
+
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": query},
+        ],
+    }
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "http://localhost",
+        "X-Title": "Cardinal Research",
+    }
+
+    try:
+        resp = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=120,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        content = (
+            data.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "")
+        )
+        return (content or "").strip() or "No response from research agent."
+    except requests.RequestException as e:
+        return f"Research request failed: {e}"
+    except (KeyError, IndexError, TypeError) as e:
+        return f"Unexpected response format: {e}"
 
 
 def read_date_range(start_date: str, end_date: str) -> str:
@@ -340,6 +425,13 @@ def main() -> None:
                     f"[System: Reading journal entries from {start_date} to {end_date}...]"
                 )
                 tool_result = read_date_range(start_date, end_date)
+            elif tool_name == "delegate_research":
+                query = arguments.get("query", "")
+                search_type = arguments.get("search_type", "deep_dive")
+                print(
+                    f"[System: Cardinal is delegating research for '{query}'...]"
+                )
+                tool_result = delegate_research(query, search_type)
             else:
                 tool_result = f"Unknown tool '{tool_name}' requested."
 
