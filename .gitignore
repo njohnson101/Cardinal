@@ -1,0 +1,4 @@
+.venv
+.env
+memory.json
+memory archive/

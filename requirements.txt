@@ -1,0 +1,4 @@
+O365>=2.0.34
+openai>=1.58.1
+python-dotenv>=1.0.1
+anthropic>=0.42.0
