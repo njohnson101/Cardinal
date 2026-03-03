@@ -30,7 +30,7 @@ SYSTEM_PROMPT = (
 )
 
 TOKEN_THRESHOLD = 3000
-KEEP_MOST_RECENT_MESSAGES = 4
+KEEP_MOST_RECENT_MESSAGES = 6
 CHAT_MODEL = "anthropic/claude-haiku-4.5"
 SUMMARY_MODEL = "anthropic/claude-haiku-4.5"
 
