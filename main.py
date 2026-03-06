@@ -6,6 +6,7 @@ Wraps the existing terminal-based Cardinal agent logic in a GUI.
 import json
 import threading
 import os
+from datetime import datetime
 
 import customtkinter as ctk
 from dotenv import load_dotenv
@@ -15,8 +16,10 @@ from cardinal import (
     CHAT_MODEL,
     TOKEN_THRESHOLD,
     TOOLS,
+    _today_date,
     delegate_research,
     estimate_tokens,
+    get_todays_schedule,
     load_memory,
     read_date_range,
     save_memory,
@@ -143,7 +146,19 @@ class CardinalApp(ctk.CTk):
         # Reuse the same messages list as the terminal agent
         messages = self.messages
 
-        messages.append({"role": "user", "content": user_text})
+        # Wrap user input in structured JSON including today's date and current time
+        current_time = datetime.now().strftime("%H:%M")
+        user_payload = {
+            "text": user_text,
+            "today": _today_date,
+            "time": current_time,
+        }
+        messages.append(
+            {
+                "role": "user",
+                "content": json.dumps(user_payload, ensure_ascii=False),
+            }
+        )
 
         # Rolling summary if needed
         if estimate_tokens(messages) > TOKEN_THRESHOLD:
@@ -200,6 +215,11 @@ class CardinalApp(ctk.CTk):
                     f"[System: Cardinal is delegating research for '{query}'...]"
                 )
                 tool_result = delegate_research(query, search_type)
+            elif tool_name == "get_todays_schedule":
+                self._append_safe(
+                    "[System: Cardinal is checking your Google Calendar...]"
+                )
+                tool_result = get_todays_schedule()
             else:
                 tool_result = f"Unknown tool '{tool_name}' requested."
                 self._append_safe(f"[System: {tool_result}]")

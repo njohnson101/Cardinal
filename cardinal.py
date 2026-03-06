@@ -9,10 +9,14 @@ Cardinal version 2.0.0
 
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any
 
 import requests
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
 from dotenv import load_dotenv
 from openai import OpenAI
 
@@ -36,6 +40,9 @@ SUMMARY_MODEL = "anthropic/claude-haiku-4.5"
 
 # Path to your local Obsidian vault (update this to your real path)
 OBSIDIAN_PATH = "/mnt/c/Users/smook/OneDrive/Documents/Selfmaxxing"
+
+# Google Calendar scopes
+SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]
 
 TOOLS: List[Dict[str, Any]] = [
     {
@@ -110,6 +117,21 @@ TOOLS: List[Dict[str, Any]] = [
                     },
                 },
                 "required": ["query", "search_type"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_todays_schedule",
+            "description": (
+                "Use this tool whenever the user asks about their schedule, meetings, "
+                "or calendar events for today or the near future."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
             },
         },
     },
@@ -231,6 +253,87 @@ def delegate_research(query: str, search_type: str) -> str:
         return f"Research request failed: {e}"
     except (KeyError, IndexError, TypeError) as e:
         return f"Unexpected response format: {e}"
+
+
+def get_calendar_service():
+    """
+    Authenticate with Google Calendar API and return a service client.
+    Uses token.json for cached credentials; falls back to credentials.json + OAuth flow.
+    """
+    creds = None
+    token_path = "token.json"
+
+    if os.path.exists(token_path):
+        try:
+            creds = Credentials.from_authorized_user_file(token_path, SCOPES)
+        except Exception:
+            creds = None
+
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            try:
+                creds.refresh(Request())
+            except Exception:
+                creds = None
+        if not creds or not creds.valid:
+            if not os.path.exists("credentials.json"):
+                raise FileNotFoundError(
+                    "credentials.json not found. Please place your Google OAuth client file in the project root."
+                )
+            flow = InstalledAppFlow.from_client_secrets_file(
+                "credentials.json", SCOPES
+            )
+            creds = flow.run_local_server(port=0)
+        # Save the credentials for the next run
+        with open(token_path, "w") as token:
+            token.write(creds.to_json())
+
+    return build("calendar", "v3", credentials=creds)
+
+
+def get_todays_schedule() -> str:
+    """
+    Fetch the next 10 upcoming events on the user's primary calendar from now onward.
+    Returns a formatted string of Event Name, Start, End.
+    """
+    try:
+        service = get_calendar_service()
+    except Exception as e:
+        return f"Failed to access Google Calendar: {e}"
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    try:
+        events_result = (
+            service.events()
+            .list(
+                calendarId="primary",
+                timeMin=now,
+                maxResults=10,
+                singleEvents=True,
+                orderBy="startTime",
+            )
+            .execute()
+        )
+    except Exception as e:
+        return f"Error fetching events from Google Calendar: {e}"
+
+    events = events_result.get("items", [])
+    if not events:
+        return "No upcoming events found for today or the near future."
+
+    lines: list[str] = ["Upcoming events (next 10):"]
+    for event in events:
+        summary = event.get("summary", "(No title)")
+        start_raw = event.get("start", {}).get(
+            "dateTime", event.get("start", {}).get("date", "")
+        )
+        end_raw = event.get("end", {}).get(
+            "dateTime", event.get("end", {}).get("date", "")
+        )
+        lines.append(f"- {summary}\n  Start: {start_raw}\n  End:   {end_raw}")
+
+    return "\n".join(lines)
 
 
 def read_date_range(start_date: str, end_date: str) -> str:
@@ -382,7 +485,19 @@ def main() -> None:
             print("Goodbye!")
             break
 
-        messages.append({"role": "user", "content": user_input})
+        # Wrap user input in structured JSON including today's date and current time
+        current_time = datetime.now().strftime("%H:%M")
+        user_payload = {
+            "text": user_input,
+            "today": _today_date,
+            "time": current_time,
+        }
+        messages.append(
+            {
+                "role": "user",
+                "content": json.dumps(user_payload, ensure_ascii=False),
+            }
+        )
 
         if estimate_tokens(messages) > TOKEN_THRESHOLD:
             print("[System: Compressing memory in background...]")
@@ -435,6 +550,9 @@ def main() -> None:
                     f"[System: Cardinal is delegating research for '{query}'...]"
                 )
                 tool_result = delegate_research(query, search_type)
+            elif tool_name == "get_todays_schedule":
+                print("[System: Cardinal is checking your Google Calendar...]")
+                tool_result = get_todays_schedule()
             else:
                 tool_result = f"Unknown tool '{tool_name}' requested."
 
