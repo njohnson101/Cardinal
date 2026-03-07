@@ -39,7 +39,11 @@ CHAT_MODEL = "anthropic/claude-haiku-4.5"
 SUMMARY_MODEL = "anthropic/claude-haiku-4.5"
 
 # Path to your local Obsidian vault (update this to your real path)
-OBSIDIAN_PATH = "/mnt/c/Users/smook/OneDrive/Documents/Selfmaxxing"
+OBSIDIAN_PATH = (os.getenv("OBSIDIAN_PATH") or "").strip()
+if not OBSIDIAN_PATH:
+    print("Error: OBSIDIAN_PATH not found in environment.")
+    exit(1)
+
 
 # Google Calendar scopes
 SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]
