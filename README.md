@@ -16,3 +16,4 @@ Heavily vibe-coded.
 Capabilities that I will add when my Cursor tokens reset:
 1. Email filtering and sorting
 2. More robust scheduling assistance
+3. Goal setting and management
