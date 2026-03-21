@@ -9,11 +9,10 @@ Current capabilities include:
 - **Calendar access**: connects to Google Calendar to help with scheduling tasks
 - **Research**: can query Gemini 2.5 pro for advanced reasoning tasks and two levels of Perplexity models (sonar and sonar-pro) for web searches
 
-This repository includes both a CLI (`python cardinal.py`) and primitive GUI (`python main.py').
+This repository includes both a CLI (`python cardinal.py`) and primitive GUI (`python main.py`). The repository also includes a `triage.py` file that contains an email-sorting agent.
 
 Heavily vibe-coded.
 
 Capabilities that I will add when my Cursor tokens reset:
-1. Email filtering and sorting
-2. More robust scheduling assistance
-3. Goal setting and management
+1. More robust scheduling assistance
+2. Goal setting and management
