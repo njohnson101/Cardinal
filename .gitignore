@@ -5,3 +5,4 @@ memory archive/
 __pycache__/
 credentials.json
 token.json
+triage_log.txt
