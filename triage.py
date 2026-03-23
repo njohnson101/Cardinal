@@ -13,6 +13,8 @@ import sys
 from datetime import datetime, timezone
 from email import message_from_bytes
 
+import argparse
+
 import requests
 from dotenv import load_dotenv
 from google.auth.transport.requests import Request
@@ -186,11 +188,15 @@ def append_log(timestamp, sender, subject, category, summary, draft_reply):
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--limit", type=int, default=50)
+    args = parser.parse_args()
+
     print("Authenticating with Gmail...")
     service = get_gmail_service()
 
     print("Fetching inbox emails...")
-    raw_emails = fetch_inbox_emails(service)
+    raw_emails = fetch_inbox_emails(service, max_results=args.limit)
 
     if not raw_emails:
         print("No inbox emails found.")
