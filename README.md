@@ -16,3 +16,4 @@ Heavily vibe-coded.
 Capabilities that I will add when my Cursor tokens reset:
 1. More robust scheduling assistance
 2. Goal setting and management
+3. Network management
