@@ -14,17 +14,17 @@ from openai import OpenAI
 
 from cardinal import (
     CHAT_MODEL,
-    TOKEN_THRESHOLD,
     TOOLS,
     _today_date,
     delegate_research,
-    estimate_tokens,
     get_todays_schedule,
     load_memory,
     read_date_range,
+    read_profile,
     save_memory,
     search_vault,
-    summarize_memory,
+    write_profile,
+    _trim_messages,
 )
 
 
@@ -160,14 +160,7 @@ class CardinalApp(ctk.CTk):
             }
         )
 
-        # Rolling summary if needed
-        if estimate_tokens(messages) > TOKEN_THRESHOLD:
-            self._append_safe("[System: Compressing memory in background...]")
-            try:
-                messages[:] = summarize_memory(self.client, messages)
-                save_memory(messages)
-            except Exception as e:
-                self._append_safe(f"[System: Memory compression failed: {e}]")
+        _trim_messages(messages)
 
         # First completion (may or may not call tools)
         try:
@@ -195,7 +188,15 @@ class CardinalApp(ctk.CTk):
             except json.JSONDecodeError:
                 arguments = {}
 
-            if tool_name == "search_vault":
+            if tool_name == "read_profile":
+                self._append_safe("[System: Cardinal is reading the user profile...]")
+                tool_result = read_profile() or "(Profile is empty.)"
+            elif tool_name == "update_profile":
+                content = arguments.get("content", "")
+                self._append_safe("[System: Cardinal is updating the user profile...]")
+                write_profile(content)
+                tool_result = "Profile updated successfully."
+            elif tool_name == "search_vault":
                 query = arguments.get("query", "")
                 self._append_safe(
                     f"[System: Searching Obsidian vault for '{query}'...]"

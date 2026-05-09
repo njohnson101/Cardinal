@@ -1,10 +1,8 @@
 """
+Cardinal version 3.0.0
+
 Terminal-based AI chat agent with persistent memory.
 Uses OpenRouter with Claude Haiku 4.5 via the OpenAI SDK.
-"""
-
-"""
-Cardinal version 2.0.0
 """
 
 import json
@@ -23,6 +21,8 @@ from openai import OpenAI
 load_dotenv()
 
 MEMORY_FILE = "memory.json"
+PROFILE_FILE = "profile.md"
+RECENT_MESSAGE_LIMIT = 20
 
 _today = datetime.now()
 _today_date = _today.strftime("%Y-%m-%d")
@@ -30,25 +30,56 @@ _today_weekday = _today.strftime("%A")
 SYSTEM_PROMPT = (
     "You are my Master AI Orchestrator. Your name is Cardinal. You are helpful, concise, "
     "and have persistent memory of our conversations. "
-    f"Today's date is {_today_date} ({_today_weekday})."
+    f"Today's date is {_today_date} ({_today_weekday}). "
+    "You maintain a persistent profile of the user in profile.md. "
+    "Before updating the profile, always call read_profile first to see the current state. "
+    "Call update_profile mid-conversation whenever you learn something meaningful and durable "
+    "about the user — do not wait to be asked."
 )
 
-TOKEN_THRESHOLD = 3000
-KEEP_MOST_RECENT_MESSAGES = 6
 CHAT_MODEL = "anthropic/claude-haiku-4.5"
-SUMMARY_MODEL = "anthropic/claude-haiku-4.5"
 
-# Path to your local Obsidian vault (update this to your real path)
 OBSIDIAN_PATH = (os.getenv("OBSIDIAN_PATH") or "").strip()
 if not OBSIDIAN_PATH:
     print("Error: OBSIDIAN_PATH not found in environment.")
     exit(1)
 
-
-# Google Calendar scopes
 SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]
 
 TOOLS: List[Dict[str, Any]] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "read_profile",
+            "description": "Read the current user profile before updating it.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_profile",
+            "description": (
+                "Overwrite profile.md with full new content. Always call read_profile first. "
+                "Rewrite the entire profile, keeping it concise and removing outdated information. "
+                "Only invoke when you learn something meaningful and durable about the user."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "string",
+                        "description": "The full new profile content to write.",
+                    },
+                },
+                "required": ["content"],
+            },
+        },
+    },
     {
         "type": "function",
         "function": {
@@ -142,12 +173,18 @@ TOOLS: List[Dict[str, Any]] = [
 ]
 
 
-def estimate_tokens(messages: list[dict]) -> int:
-    total_chars = 0
-    for msg in messages:
-        content = msg.get("content") or ""
-        total_chars += len(content)
-    return total_chars // 4
+def read_profile() -> str:
+    """Read profile.md and return its contents; returns empty string if file doesn't exist."""
+    if not os.path.exists(PROFILE_FILE):
+        return ""
+    with open(PROFILE_FILE, "r", encoding="utf-8") as f:
+        return f.read()
+
+
+def write_profile(content: str) -> None:
+    """Overwrite profile.md with new content."""
+    with open(PROFILE_FILE, "w", encoding="utf-8") as f:
+        f.write(content)
 
 
 def search_vault(query: str) -> str:
@@ -288,7 +325,6 @@ def get_calendar_service():
                 "credentials.json", SCOPES
             )
             creds = flow.run_local_server(port=0)
-        # Save the credentials for the next run
         with open(token_path, "w") as token:
             token.write(creds.to_json())
 
@@ -364,7 +400,6 @@ def read_date_range(start_date: str, end_date: str) -> str:
     parts: List[str] = []
 
     while current <= end:
-        # Filenames are M-D-YYYY.md (no leading zeros), e.g. 3-2-2026.md
         filename = f"{current.month}-{current.day}-{current.year}.md"
         full_path = os.path.join(journals_dir, filename)
         if os.path.isfile(full_path):
@@ -385,78 +420,54 @@ def read_date_range(start_date: str, end_date: str) -> str:
     return "\n".join(parts)
 
 
-def summarize_memory(client: OpenAI, messages: list[dict]) -> list[dict]:
-    """
-    Compress older messages into a single rolling summary message.
-    Keeps the original system prompt (messages[0]) and the N most recent messages intact.
-    """
-    if not messages:
-        return messages
-
-    if len(messages) <= 1 + KEEP_MOST_RECENT_MESSAGES:
-        return messages
-
-    system_prompt = messages[0]
-    recent = messages[-KEEP_MOST_RECENT_MESSAGES:]
-    older = messages[1:-KEEP_MOST_RECENT_MESSAGES]
-
-    if not older:
-        return messages
-
-    summarizer_messages = [
-        {
-            "role": "system",
-            "content": "You are a summarization engine. Output only the summary paragraph.",
-        },
-        {
-            "role": "user",
-            "content": (
-                "Summarize this conversation history into a dense, highly detailed paragraph. "
-                "Retain all personal facts, names, user preferences, and context.\n\n"
-                "Conversation history (JSON):\n"
-                f"{json.dumps(older, ensure_ascii=False)}"
-            ),
-        },
-    ]
-
-    response = client.chat.completions.create(
-        model=SUMMARY_MODEL,
-        messages=summarizer_messages,
-    )
-
-    summary_text = (response.choices[0].message.content or "").strip()
-    summary_message = {
-        "role": "system",
-        "content": f"Summary of older conversation: {summary_text}",
-    }
-
-    return [system_prompt, summary_message, *recent]
-
-
 def load_memory() -> list[dict]:
-    """Load conversation history from memory.json, creating it with system prompt if needed."""
+    """Load conversation history from memory.json, injecting a fresh profile system message."""
     if not os.path.exists(MEMORY_FILE):
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-        ]
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
         save_memory(messages)
-        return messages
+    else:
+        with open(MEMORY_FILE, "r") as f:
+            messages = json.load(f)
+        if not messages or messages[0].get("role") != "system":
+            messages.insert(0, {"role": "system", "content": SYSTEM_PROMPT})
+            save_memory(messages)
 
-    with open(MEMORY_FILE, "r") as f:
-        messages = json.load(f)
-
-    # Ensure system prompt is at the start (for upgrades/corruption recovery)
-    if not messages or messages[0].get("role") != "system":
-        messages.insert(0, {"role": "system", "content": SYSTEM_PROMPT})
-        save_memory(messages)
+    # Strip any stale profile injection from a prior session, then re-inject fresh
+    messages = [
+        m for m in messages
+        if not (m.get("role") == "system" and m.get("content", "").startswith("[User Profile]"))
+    ]
+    profile = read_profile()
+    if profile:
+        messages.insert(1, {"role": "system", "content": f"[User Profile]\n{profile}"})
 
     return messages
 
 
 def save_memory(messages: list[dict]) -> None:
-    """Overwrite memory.json with the current message array."""
+    """Persist message history to memory.json, excluding the runtime profile injection."""
+    to_save = [
+        m for m in messages
+        if not (m.get("role") == "system" and m.get("content", "").startswith("[User Profile]"))
+    ]
     with open(MEMORY_FILE, "w") as f:
-        json.dump(messages, f, indent=2)
+        json.dump(to_save, f, indent=2)
+
+
+def _trim_messages(messages: list[dict]) -> None:
+    """Trim oldest non-system messages in-place if count exceeds RECENT_MESSAGE_LIMIT."""
+    non_system = [m for m in messages if m.get("role") != "system"]
+    if len(non_system) <= RECENT_MESSAGE_LIMIT:
+        return
+    excess = len(non_system) - RECENT_MESSAGE_LIMIT
+    removed = 0
+    new_messages = []
+    for m in messages:
+        if m.get("role") != "system" and removed < excess:
+            removed += 1
+        else:
+            new_messages.append(m)
+    messages[:] = new_messages
 
 
 def main() -> None:
@@ -489,7 +500,6 @@ def main() -> None:
             print("Goodbye!")
             break
 
-        # Wrap user input in structured JSON including today's date and current time
         current_time = datetime.now().strftime("%H:%M")
         user_payload = {
             "text": user_input,
@@ -503,13 +513,7 @@ def main() -> None:
             }
         )
 
-        if estimate_tokens(messages) > TOKEN_THRESHOLD:
-            print("[System: Compressing memory in background...]")
-            try:
-                messages = summarize_memory(client, messages)
-                save_memory(messages)
-            except Exception as e:
-                print(f"[System: Memory compression failed: {e}]")
+        _trim_messages(messages)
 
         try:
             response = client.chat.completions.create(
@@ -520,12 +524,10 @@ def main() -> None:
             )
         except Exception as e:
             print(f"API Error: {e}")
-            messages.pop()  # Remove failed user message from history
+            messages.pop()
             continue
 
         message = response.choices[0].message
-
-        # Handle optional tool calls (OpenAI tool calling via OpenRouter)
         tool_calls = getattr(message, "tool_calls", None) or []
 
         if tool_calls:
@@ -536,23 +538,27 @@ def main() -> None:
             except json.JSONDecodeError:
                 arguments = {}
 
-            if tool_name == "search_vault":
+            if tool_name == "read_profile":
+                print("[System: Cardinal is reading the user profile...]")
+                tool_result = read_profile() or "(Profile is empty.)"
+            elif tool_name == "update_profile":
+                content = arguments.get("content", "")
+                print("[System: Cardinal is updating the user profile...]")
+                write_profile(content)
+                tool_result = "Profile updated successfully."
+            elif tool_name == "search_vault":
                 query = arguments.get("query", "")
                 print(f"[System: Searching Obsidian vault for '{query}'...]")
                 tool_result = search_vault(query)
             elif tool_name == "read_date_range":
                 start_date = arguments.get("start_date", "")
                 end_date = arguments.get("end_date", "")
-                print(
-                    f"[System: Reading journal entries from {start_date} to {end_date}...]"
-                )
+                print(f"[System: Reading journal entries from {start_date} to {end_date}...]")
                 tool_result = read_date_range(start_date, end_date)
             elif tool_name == "delegate_research":
                 query = arguments.get("query", "")
                 search_type = arguments.get("search_type", "deep_dive")
-                print(
-                    f"[System: Cardinal is delegating research for '{query}'...]"
-                )
+                print(f"[System: Cardinal is delegating research for '{query}'...]")
                 tool_result = delegate_research(query, search_type)
             elif tool_name == "get_todays_schedule":
                 print("[System: Cardinal is checking your Google Calendar...]")
@@ -560,7 +566,6 @@ def main() -> None:
             else:
                 tool_result = f"Unknown tool '{tool_name}' requested."
 
-            # Log tool call and result into the message history
             messages.append(
                 {
                     "role": "assistant",
